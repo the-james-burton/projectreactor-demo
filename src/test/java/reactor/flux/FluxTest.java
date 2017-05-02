@@ -13,9 +13,12 @@ import org.junit.rules.TestName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import reactor.core.publisher.BaseSubscriber;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.ParallelFlux;
 import reactor.core.publisher.UnicastProcessor;
 import reactor.core.scheduler.Schedulers;
+import reactor.test.utils.DelaySubscriber;
 import reactor.test.utils.LoggingSubscriber;
 import reactor.test.utils.TestUtils;
 
@@ -159,7 +162,7 @@ public class FluxTest {
   }
 
   @Test
-  public void testBackpressure() throws InterruptedException {
+  public void testRequest() throws InterruptedException {
     LoggingSubscriber<Integer> subscriber = new LoggingSubscriber<>("John");
     Flux<Integer> flux = Flux.range(1, 10).log();
     flux.subscribe(subscriber);
@@ -178,9 +181,9 @@ public class FluxTest {
     Flux<Integer> flux = Flux.range(1, 10).log();
 
     flux
-        .doOnNext(s -> logger.info("pre-window:{}", s.toString()))
+        .doOnNext(s -> logger.info("pre-window:{}", s))
         .window(3)
-        .subscribe(s -> s.log().buffer().subscribe(t -> logger.info("post-window:{}", t.toString())));
+        .subscribe(s -> s.log().buffer().subscribe(t -> logger.info("post-window:{}", t)));
   }
 
   @Test
@@ -188,10 +191,88 @@ public class FluxTest {
     Flux<Integer> flux = Flux.range(1, 10).log();
 
     flux
-        .doOnNext(s -> logger.info("pre-buffer:{}", s.toString()))
+        .doOnNext(s -> logger.info("pre-buffer:{}", s))
         .buffer(3)
-        .subscribe(t -> logger.info("post-buffer:{}", t.toString()));
+        .subscribe(t -> logger.info("post-buffer:{}", t));
+  }
 
+  @Test
+  public void testGroupBy() {
+    Flux<Integer> flux = Flux.range(1, 10).log();
+
+    flux
+        .groupBy(i -> i % 2)
+        .subscribe(s -> s.buffer().subscribe(t -> logger.info("group:{}:{}", s.key(), t)));
+  }
+
+  @Test
+  public void testSplit() throws InterruptedException {
+    Flux<Integer> flux = Flux.range(1, 10).log();
+
+    flux
+        .flatMap(i -> Flux.just(i, i + 100))
+        .subscribe(t -> logger.info("split:{}", t));
+
+    // flux
+    // .handle((i, sink) -> {
+    // sink.next(i);
+    // sink.next(i + 200);
+    // })
+    // .subscribe(t -> logger.info("split:{}", t));
+  }
+
+  @Test
+  public void testSample() throws Exception {
+    Flux<Long> flux = Flux.interval(Duration.ofMillis(10)).log();
+
+    flux
+        .sample(Duration.ofMillis(100))
+        .subscribe(t -> logger.info("interval:{}", t));
+
+    Thread.sleep(500);
+  }
+
+  @Test
+  public void testBackpressureParallel() throws Exception {
+
+    ParallelFlux<Integer> flux = Flux.range(0, 10).parallel()
+        .runOn(Schedulers.parallel()).log();
+
+    BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
+    BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
+
+    flux.subscribe(slow);
+    flux.subscribe(fast);
+
+    Thread.sleep(500);
+  }
+
+  @Test
+  public void testBackpressureHotStream() throws Exception {
+
+    Flux<Long> flux = Flux.interval(Duration.ofMillis(10)).log();
+
+    BaseSubscriber<Long> slow = new DelaySubscriber<>("slow", 20);
+    BaseSubscriber<Long> fast = new DelaySubscriber<>("fast", 5);
+
+    flux.subscribe(slow);
+    flux.subscribe(fast);
+
+    Thread.sleep(500);
+  }
+
+  @Test
+  public void testBackpressureSerial() throws Exception {
+
+    Flux<Integer> flux = Flux.range(0, 10).log();
+
+    BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
+    BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
+
+    flux.subscribe(slow);
+    flux.subscribe(fast);
+
+    Thread.sleep(500);
   }
 
 }
