@@ -14,9 +14,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import reactor.core.publisher.BaseSubscriber;
+import reactor.core.publisher.ConnectableFlux;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.ParallelFlux;
 import reactor.core.publisher.UnicastProcessor;
+import reactor.core.publisher.WorkQueueProcessor;
 import reactor.core.scheduler.Schedulers;
 import reactor.test.utils.DelaySubscriber;
 import reactor.test.utils.LoggingSubscriber;
@@ -233,18 +235,67 @@ public class FluxTest {
   }
 
   @Test
-  public void testBackpressureParallel() throws Exception {
+  public void testParallelFlux() throws Exception {
 
-    ParallelFlux<Integer> flux = Flux.range(0, 10).parallel()
+    ParallelFlux<Integer> flux = Flux.range(0, 10)
+        .parallel()
         .runOn(Schedulers.parallel()).log();
+
+    // parallel flux DOES NOT make these subscribers work at the same time...
+    flux.subscribe(i -> logger.info("one:{}", i));
+    flux.subscribe(i -> logger.info("two:{}", i));
+
+    Thread.sleep(1000);
+  }
+
+  @Test
+  public void testConnectableFlux() throws Exception {
+    Flux<Integer> flux = Flux.range(0, 5).log();
+
+    ConnectableFlux<Integer> cflux = flux.publish();
+
+    cflux.subscribe(i -> logger.info("one:{}", i));
+    cflux.subscribe(i -> logger.info("two:{}", i));
+
+    Thread.sleep(100);
+
+    // it looks like it is working in parallel, but in fact, it is waiting for ALL subscribers to signal demand...
+    cflux.connect();
+  }
+
+  @Test
+  public void testBackpressureSerial() throws Exception {
+
+    Flux<Integer> flux = Flux.range(0, 5).log();
 
     BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
     BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
 
-    flux.subscribe(slow);
-    flux.subscribe(fast);
+    flux.subscribeWith(WorkQueueProcessor.create()).subscribe(slow);
+    logger.info("slow done");
+    flux.subscribeWith(fast);
 
     Thread.sleep(500);
+  }
+
+  @Test
+  public void testConnectableFluxWithBackpressure() throws Exception {
+    Flux<Integer> flux = Flux.range(0, 5).log();
+
+    ConnectableFlux<Integer> cflux = flux.publish();
+
+    BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
+    BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
+
+    cflux.subscribe(fast);
+    cflux.subscribe(slow);
+
+    Thread.sleep(100);
+    cflux.connect();
+
+    // notice how the fast waits for the slow - this is by design...
+    Thread.sleep(500);
+
   }
 
   @Test
@@ -258,19 +309,20 @@ public class FluxTest {
     flux.subscribe(slow);
     flux.subscribe(fast);
 
+    // this hot stream is interesting, since it does appear to let the subscribers work at the same time...
     Thread.sleep(500);
   }
 
   @Test
-  public void testBackpressureSerial() throws Exception {
+  public void testSubscribeWith() throws Exception {
 
-    Flux<Integer> flux = Flux.range(0, 10).log();
+    Flux<Integer> flux = Flux.range(0, 5).log();
 
     BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
     BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
 
-    flux.subscribe(slow);
-    flux.subscribe(fast);
+    flux.subscribeWith(WorkQueueProcessor.create()).subscribe(slow);
+    flux.subscribeWith(WorkQueueProcessor.create()).subscribe(fast);
 
     Thread.sleep(500);
   }

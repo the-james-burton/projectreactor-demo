@@ -1,6 +1,7 @@
 package reactor.test.utils;
 
 import java.lang.invoke.MethodHandles;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
@@ -19,6 +20,7 @@ public class DelaySubscriber<T> extends BaseSubscriber<T> {
 
   private final String name;
   private final int delay;
+  private final AtomicInteger count = new AtomicInteger(0);
 
   public DelaySubscriber(String name, int delay) {
     this.name = name;
@@ -33,7 +35,7 @@ public class DelaySubscriber<T> extends BaseSubscriber<T> {
   @Override
   protected void hookOnNext(T value) {
     try {
-      logger.info("{}:processing", name);
+      logger.info("{}:processing:{}", name, count.incrementAndGet());
       Thread.sleep(delay);
     } catch (InterruptedException e) {
       e.printStackTrace();
