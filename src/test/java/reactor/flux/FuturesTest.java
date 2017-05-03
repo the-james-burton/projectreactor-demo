@@ -13,7 +13,10 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.assertj.core.util.Lists;
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,6 +25,14 @@ import javaslang.control.Try;
 public class FuturesTest {
 
   private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
+  @Rule
+  public TestName name = new TestName();
+
+  @Before
+  public void before() {
+    logger.info("start:{}", name.getMethodName());
+  }
 
   @Test
   public void testFuture() throws Exception {
@@ -62,7 +73,8 @@ public class FuturesTest {
   public void testCompletableFuture() throws Exception {
     List<String> data = Lists.newArrayList("a", "b", "c");
 
-    data.forEach(s -> CompletableFuture.supplyAsync(() -> s.concat("z"))
+    data.forEach(s -> CompletableFuture
+        .supplyAsync(() -> s.concat("z"))
         .thenAccept(t -> logger.info("done:{}", t)));
   }
 
