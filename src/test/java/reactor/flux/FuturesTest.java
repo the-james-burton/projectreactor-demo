@@ -3,6 +3,7 @@ package reactor.flux;
 import java.lang.invoke.MethodHandles;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionService;
 import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
@@ -42,7 +43,10 @@ public class FuturesTest {
   public void testCompletionService() throws Exception {
     List<String> data = Lists.newArrayList("a", "b", "c");
 
-    Function<String, Callable<String>> task = (s) -> () -> s.concat("z");
+    Function<String, Callable<String>> task = (s) -> () -> {
+      logger.info("appending:{}", s);
+      return s.concat("z");
+    };
 
     ExecutorService executor = ForkJoinPool.commonPool();
     CompletionService<String> completionService = new ExecutorCompletionService<>(executor);
@@ -51,11 +55,15 @@ public class FuturesTest {
 
     data.stream()
         .map(s -> Try.of(() -> completionService.take()).get())
-        .forEach(i -> logger.info("done:{}", Try.of(() -> i.get()).get()));
+        .forEach(t -> logger.info("done:{}", Try.of(() -> t.get()).get()));
   }
 
   @Test
   public void testCompletableFuture() throws Exception {
+    List<String> data = Lists.newArrayList("a", "b", "c");
+
+    data.forEach(s -> CompletableFuture.supplyAsync(() -> s.concat("z"))
+        .thenAccept(t -> logger.info("done:{}", t)));
   }
 
 }
