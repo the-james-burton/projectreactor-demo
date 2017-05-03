@@ -5,6 +5,7 @@ import static java.lang.String.*;
 import java.lang.invoke.MethodHandles;
 import java.time.Duration;
 import java.util.List;
+import java.util.function.Function;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -39,53 +40,9 @@ public class FluxTest {
   }
 
   @Test
-  public void testCreate() throws Exception {
-    Flux.<String> create(sink -> bespokeAPI.notify(sink))
-        .subscribe(m -> logger.info(m.toString()));
-
-    bespokeAPI.onMessage("z");
-    bespokeAPI.onMessage("x");
-    bespokeAPI.onMessage("y");
-
-    Thread.sleep(1000);
-  }
-
-  @Test
-  public void testCreateAndBufferSort() throws Exception {
-    Flux.<String> create(sink -> bespokeAPI.notify(sink))
-        .buffer(Duration.ofMillis(100))
-        .flatMap(l -> Flux.fromIterable(l).sort())
-        .subscribe(m -> logger.info(m.toString()));
-
-    bespokeAPI.onMessage("z");
-    bespokeAPI.onMessage("x");
-    bespokeAPI.onMessage("y");
-
-    Thread.sleep(150);
-
-    bespokeAPI.onMessage("c");
-    bespokeAPI.onMessage("a");
-    bespokeAPI.onMessage("b");
-
-    Thread.sleep(150);
-
-  }
-
-  @Test
   public void testJust() {
     Flux.<String> just("c", "a", "b")
         .subscribe(m -> logger.info(m.toString()));
-  }
-
-  @Test
-  public void testGenerateBufferSort() {
-    List<String> result = Flux.<String> just("c", "a", "b")
-        .buffer(Duration.ofSeconds(2))
-        .flatMap(l -> Flux.fromIterable(l).sort())
-        .collectList().block();
-    // .subscribe(m -> logger.info(m.toString()));
-
-    logger.info(result.toString());
   }
 
   @Test
@@ -321,10 +278,83 @@ public class FluxTest {
     BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
     BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
 
-    flux.subscribeWith(WorkQueueProcessor.create()).subscribe(slow);
-    flux.subscribeWith(WorkQueueProcessor.create()).subscribe(fast);
+    //
+    flux.subscribeWith(WorkQueueProcessor.create("slow proc", 1)).subscribe(slow);
+    flux.subscribeWith(WorkQueueProcessor.create("fast proc", 1)).subscribe(fast);
 
     Thread.sleep(500);
+  }
+
+  @Test
+  public void testFlatMap() throws Exception {
+    Flux<Integer> flux = Flux.range(0, 5).log();
+
+    flux
+        .flatMap(i -> Flux.just(i, i + 100))
+        .subscribe(i -> logger.info(i.toString()));
+  }
+
+  @Test
+  public void testCreate() throws Exception {
+    Flux.<String> create(sink -> bespokeAPI.notify(sink))
+        .subscribe(m -> logger.info(m.toString()));
+
+    bespokeAPI.onMessage("z");
+    bespokeAPI.onMessage("x");
+    bespokeAPI.onMessage("y");
+
+    Thread.sleep(1000);
+  }
+
+  @Test
+  public void testCreateAndBufferSort() throws Exception {
+    Flux.<String> create(sink -> bespokeAPI.notify(sink))
+        .buffer(Duration.ofMillis(100))
+        .flatMap(l -> Flux.fromIterable(l).sort())
+        .subscribe(m -> logger.info(m.toString()));
+
+    bespokeAPI.onMessage("z");
+    bespokeAPI.onMessage("x");
+    bespokeAPI.onMessage("y");
+
+    Thread.sleep(150);
+
+    bespokeAPI.onMessage("c");
+    bespokeAPI.onMessage("a");
+    bespokeAPI.onMessage("b");
+
+    Thread.sleep(150);
+
+  }
+
+  @Test
+  public void testGenerateBufferSort() {
+    List<String> result = Flux.<String> just("c", "a", "b")
+        .buffer(Duration.ofSeconds(2))
+        .flatMap(l -> Flux.fromIterable(l).sort())
+        .collectList().block();
+    // .subscribe(m -> logger.info(m.toString()));
+
+    logger.info(result.toString());
+  }
+
+  @Test
+  public void testTransform() throws Exception {
+    // reusable part os a flux processing chain...
+    Function<Flux<Integer>, Flux<Integer>> gtFivePlusTen = f -> f
+        .filter(i -> i > 5)
+        .map(i -> i + 10);
+
+    Flux<Integer> flux = Flux.range(1, 10);
+
+    flux
+        .transform(gtFivePlusTen)
+        .subscribe(m -> logger.info(m.toString()));
+  }
+
+  @Test
+  public void testCompose() throws Exception {
+
   }
 
 }
