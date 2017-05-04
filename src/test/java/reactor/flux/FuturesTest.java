@@ -1,5 +1,7 @@
 package reactor.flux;
 
+import static java.util.stream.Collectors.*;
+
 import java.lang.invoke.MethodHandles;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -10,7 +12,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.Future;
 import java.util.function.Function;
-import java.util.stream.Collectors;
+import java.util.function.Supplier;
 
 import org.assertj.core.util.Lists;
 import org.junit.Before;
@@ -38,16 +40,21 @@ public class FuturesTest {
   public void testFuture() throws Exception {
     List<String> data = Lists.newArrayList("a", "b", "c");
 
-    Callable<List<String>> task = () -> data.stream()
-        .peek(s -> logger.info("appending:{}", s))
-        .map(s -> s.concat("z"))
-        .collect(Collectors.toList());
+    Function<String, Callable<String>> task = (s) -> () -> {
+      logger.info("appending:{}", s);
+      return s.concat("z");
+    };
 
-    ExecutorService executor = ForkJoinPool.commonPool();
-    Future<List<String>> future = executor.submit(task);
+    ExecutorService executor = new ForkJoinPool(3);
 
-    List<String> done = future.get();
-    done.forEach(s -> logger.info("done:{}", s));
+    List<Future<String>> futures = data.stream()
+        .map(s -> task.apply(s))
+        .map(c -> executor.submit(c))
+        .collect(toList());
+
+    futures.stream()
+        .map(f -> Try.of(() -> f.get()).get())
+        .forEach(s -> logger.info("done:{}", s));
   }
 
   @Test
@@ -59,7 +66,7 @@ public class FuturesTest {
       return s.concat("z");
     };
 
-    ExecutorService executor = ForkJoinPool.commonPool();
+    ExecutorService executor = new ForkJoinPool(3);
     CompletionService<String> completionService = new ExecutorCompletionService<>(executor);
 
     data.forEach(s -> completionService.submit(task.apply(s)));
@@ -73,9 +80,14 @@ public class FuturesTest {
   public void testCompletableFuture() throws Exception {
     List<String> data = Lists.newArrayList("a", "b", "c");
 
+    Function<String, Supplier<String>> task = (s) -> () -> {
+      logger.info("appending:{}", s);
+      return s.concat("z");
+    };
+
     data.forEach(s -> CompletableFuture
-        .supplyAsync(() -> s.concat("z"))
-        .thenAccept(t -> logger.info("done:{}", t)));
+        .supplyAsync(() -> task.apply(s))
+        .thenAccept(t -> logger.info("done:{}", t.get())));
   }
 
 }
