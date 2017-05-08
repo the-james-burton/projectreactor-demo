@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:noNamespaceSchemaLocation="logback.xsd">
+
+  <!-- ================================================================ -->
+  <property
+    name="CONSOLE_LOG_PATTERN"
+    value="%d{ISO8601} %5.5p - [%10.10t] %-30.30logger{1} : %m%n" />
+
+  <!-- ================================================================ -->
+  <appender
+    name="CONSOLE"
+    class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+    </encoder>
+  </appender>
+
+  <!-- ================================================================ -->
+  <logger
+    name="org.jimsey.projects"
+    additivity="false">
+    <appender-ref ref="CONSOLE" />
+  </logger>
+
+  <!-- ================================================================ -->
+  <root level="INFO">
+    <appender-ref ref="CONSOLE" />
+  </root>
+
+</configuration>

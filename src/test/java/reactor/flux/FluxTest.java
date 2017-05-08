@@ -175,14 +175,23 @@ public class FluxTest {
     // flux
     // .handle((i, sink) -> {
     // sink.next(i);
-    // sink.next(i + 200);
+    // sink.next(i + 200););
     // })
-    // .subscribe(t -> logger.info("split:{}", t));
+    // .subscribe(t -> logger.info("split:{}", t)
   }
+
+  private static Function<Long, Long> exceptionAfterThrity = i -> {
+    if (i < 30)
+      return i;
+    throw new RuntimeException("cancelling");
+  };
 
   @Test
   public void testSample() throws Exception {
-    Flux<Long> flux = Flux.interval(Duration.ofMillis(10)).log();
+    Flux<Long> flux = Flux.interval(Duration.ofMillis(10)).log()
+        // only an error will stop this flux..!
+        .map(i -> exceptionAfterThrity.apply(i))
+        .onErrorReturn(-1l);
 
     flux
         .sample(Duration.ofMillis(100))
@@ -257,8 +266,9 @@ public class FluxTest {
 
   @Test
   public void testBackpressureHotStream() throws Exception {
-
-    Flux<Long> flux = Flux.interval(Duration.ofMillis(10)).log();
+    Flux<Long> flux = Flux.interval(Duration.ofMillis(10))
+        .map(i -> exceptionAfterThrity.apply(i))
+        .log();
 
     BaseSubscriber<Long> slow = new DelaySubscriber<>("slow", 20);
     BaseSubscriber<Long> fast = new DelaySubscriber<>("fast", 5);
@@ -312,6 +322,26 @@ public class FluxTest {
         .buffer(Duration.ofMillis(100))
         .flatMap(l -> Flux.fromIterable(l).sort())
         .subscribe(m -> logger.info(m.toString()));
+
+    bespokeAPI.onMessage("z");
+    bespokeAPI.onMessage("x");
+    bespokeAPI.onMessage("y");
+
+    Thread.sleep(150);
+
+    bespokeAPI.onMessage("c");
+    bespokeAPI.onMessage("a");
+    bespokeAPI.onMessage("b");
+
+    Thread.sleep(150);
+
+  }
+
+  @Test
+  public void testCreateAndWindowSort() throws Exception {
+    Flux.<String> create(sink -> bespokeAPI.notify(sink))
+        .window(3)
+        .subscribe(s -> s.sort().subscribe(t -> logger.info("post-window:{}", t)));
 
     bespokeAPI.onMessage("z");
     bespokeAPI.onMessage("x");
