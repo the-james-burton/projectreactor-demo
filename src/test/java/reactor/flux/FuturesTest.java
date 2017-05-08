@@ -24,6 +24,10 @@ import org.slf4j.LoggerFactory;
 
 import javaslang.control.Try;
 
+/**
+ * This class demonstrates the difference between Future, CompletionService and CompletableFuture.
+ * @author the-james-burton
+ */
 public class FuturesTest {
 
   private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
@@ -36,6 +40,7 @@ public class FuturesTest {
     logger.info("start:{}", name.getMethodName());
   }
 
+  /** With a Future, we must submit our tasks and then block on the completion  */
   @Test
   public void testFuture() throws Exception {
     List<String> data = Lists.newArrayList("a", "b", "c");
@@ -52,11 +57,15 @@ public class FuturesTest {
         .map(c -> executor.submit(c))
         .collect(toList());
 
+    // this is blocking..!
     futures.stream()
         .map(f -> Try.of(() -> f.get()).get())
         .forEach(s -> logger.info("done:{}", s));
+
+    logger.info("blocked until all done");
   }
 
+  /** A CompletionService hides the Future, but is still blocking */
   @Test
   public void testCompletionService() throws Exception {
     List<String> data = Lists.newArrayList("a", "b", "c");
@@ -71,23 +80,31 @@ public class FuturesTest {
 
     data.forEach(s -> completionService.submit(task.apply(s)));
 
+    // this is blocking..!
     data.stream()
         .map(s -> Try.of(() -> completionService.take()).get())
         .forEach(t -> logger.info("done:{}", Try.of(() -> t.get()).get()));
+
+    logger.info("blocked until all done");
   }
 
+  /** The CompletableFuture */
   @Test
   public void testCompletableFuture() throws Exception {
     List<String> data = Lists.newArrayList("a", "b", "c");
 
+    // notice how the otherwise identical task is now a Supplier, not a Callable..!
     Function<String, Supplier<String>> task = (s) -> () -> {
       logger.info("appending:{}", s);
       return s.concat("z");
     };
 
+    // this is non-blocking, woo yay!
     data.forEach(s -> CompletableFuture
         .supplyAsync(() -> task.apply(s))
-        .thenAccept(t -> logger.info("done:{}", t.get())));
+        .thenAccept(t -> logger.info("done:{}:{}", s, t.get())));
+
+    logger.info("not blocked...");
   }
 
 }
