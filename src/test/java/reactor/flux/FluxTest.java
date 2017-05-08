@@ -20,6 +20,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.ParallelFlux;
 import reactor.core.publisher.UnicastProcessor;
 import reactor.core.publisher.WorkQueueProcessor;
+import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 import reactor.test.utils.DelaySubscriber;
 import reactor.test.utils.LoggingSubscriber;
@@ -180,24 +181,28 @@ public class FluxTest {
     // .subscribe(t -> logger.info("split:{}", t)
   }
 
-  private static Function<Long, Long> exceptionAfterThrity = i -> {
-    if (i < 30)
+  private static Function<Long, Long> maybeException = i -> {
+    if (Math.random() < 0.5d)
       return i;
-    throw new RuntimeException("cancelling");
+    throw new RuntimeException("I hate you!");
   };
 
   @Test
   public void testSample() throws Exception {
+    Scheduler scheduler = Schedulers.newSingle("canceling");
     Flux<Long> flux = Flux.interval(Duration.ofMillis(10)).log()
-        // only an error will stop this flux..!
-        .map(i -> exceptionAfterThrity.apply(i))
+        // this is how to properly stop an interval-based flux...
+        .cancelOn(scheduler)
         .onErrorReturn(-1l);
 
     flux
         .sample(Duration.ofMillis(100))
         .subscribe(t -> logger.info("interval:{}", t));
 
-    Thread.sleep(500);
+    Thread.sleep(300);
+
+    logger.info("disposing");
+    scheduler.dispose();
   }
 
   @Test
@@ -266,8 +271,10 @@ public class FluxTest {
 
   @Test
   public void testBackpressureHotStream() throws Exception {
+    Scheduler scheduler = Schedulers.newSingle("canceling");
     Flux<Long> flux = Flux.interval(Duration.ofMillis(10))
-        .map(i -> exceptionAfterThrity.apply(i))
+        // this is how to properly stop an interval-based flux...
+        .cancelOn(scheduler)
         .log();
 
     BaseSubscriber<Long> slow = new DelaySubscriber<>("slow", 20);
@@ -278,6 +285,7 @@ public class FluxTest {
 
     // this hot stream is interesting, since it does appear to let the subscribers work at the same time...
     Thread.sleep(500);
+    scheduler.dispose();
   }
 
   @Test
