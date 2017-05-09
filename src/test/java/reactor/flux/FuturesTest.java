@@ -43,7 +43,7 @@ public class FuturesTest {
   /** With a Future, we must submit our tasks and then block on the completion  */
   @Test
   public void testFuture() throws Exception {
-    List<String> data = Lists.newArrayList("a", "b", "c");
+    List<String> data = Lists.newArrayList("a", "b", "c", "d", "e", "f");
 
     Function<String, Callable<String>> task = (s) -> () -> {
       logger.info("appending:{}", s);
@@ -68,7 +68,7 @@ public class FuturesTest {
   /** A CompletionService hides the Future, but is still blocking */
   @Test
   public void testCompletionService() throws Exception {
-    List<String> data = Lists.newArrayList("a", "b", "c");
+    List<String> data = Lists.newArrayList("a", "b", "c", "d", "e", "f");
 
     Function<String, Callable<String>> task = (s) -> () -> {
       logger.info("appending:{}", s);
@@ -91,7 +91,7 @@ public class FuturesTest {
   /** The CompletableFuture */
   @Test
   public void testCompletableFuture() throws Exception {
-    List<String> data = Lists.newArrayList("a", "b", "c");
+    List<String> data = Lists.newArrayList("a", "b", "c", "d", "e", "f");
 
     // notice how the otherwise identical task is now a Supplier, not a Callable..!
     Function<String, Supplier<String>> task = (s) -> () -> {
@@ -100,11 +100,18 @@ public class FuturesTest {
     };
 
     // this is non-blocking, woo yay!
-    data.forEach(s -> CompletableFuture
-        .supplyAsync(() -> task.apply(s))
-        .thenAccept(t -> logger.info("done:{}:{}", s, t.get())));
+    List<CompletableFuture<Void>> futures = data.stream()
+        .map(s -> CompletableFuture
+            .supplyAsync(() -> task.apply(s))
+            .thenAccept(t -> logger.info("done:{}:{}", s, t.get())))
+        .collect(toList());
 
     logger.info("not blocked...");
+
+    // we can wait until all completed...
+    CompletableFuture.allOf(futures.toArray(new CompletableFuture[futures.size()]))
+        .thenRun(() -> logger.info("all done!"));
+
   }
 
 }

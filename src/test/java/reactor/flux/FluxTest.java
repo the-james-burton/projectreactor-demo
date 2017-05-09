@@ -14,6 +14,7 @@ import org.junit.rules.TestName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javaslang.control.Try;
 import reactor.core.publisher.BaseSubscriber;
 import reactor.core.publisher.ConnectableFlux;
 import reactor.core.publisher.Flux;
@@ -43,7 +44,20 @@ public class FluxTest {
   @Test
   public void testJust() {
     Flux.<String> just("c", "a", "b")
-        .subscribe(m -> logger.info(m.toString()));
+        .subscribe(value -> logger.info(value.toString()));
+  }
+
+  @Test
+  public void testJustWithFullSubscriber() {
+    Flux.<String> just("c", "a", "b")
+        .subscribe(
+            value -> logger.info(value.toString()),
+            error -> logger.error(error.toString()),
+            () -> logger.info("complete"),
+            subscription -> {
+              logger.info("subscribed");
+              subscription.request(Long.MAX_VALUE);
+            });
   }
 
   @Test
@@ -173,6 +187,7 @@ public class FluxTest {
         .flatMap(i -> Flux.just(i, i + 100))
         .subscribe(t -> logger.info("split:{}", t));
 
+    // this does not work for some reason, despite the docs saying it can do one-to-many...
     // flux
     // .handle((i, sink) -> {
     // sink.next(i);
@@ -181,11 +196,105 @@ public class FluxTest {
     // .subscribe(t -> logger.info("split:{}", t)
   }
 
-  private static Function<Long, Long> maybeException = i -> {
-    if (Math.random() < 0.5d)
+  private static Function<Integer, Integer> exceptionIfGreaterThanThree = i -> {
+    if (i < 4)
       return i;
     throw new RuntimeException("I hate you!");
   };
+
+  private static Function<Integer, Integer> exceptionIfDivisibleByTwo = i -> {
+    if (i % 2 == 0)
+      return i;
+    throw new RuntimeException("I hate you!");
+  };
+
+  private static Function<Integer, Integer> exceptionSometimes = i -> {
+    if (Math.random() < 0.8)
+      return i;
+    throw new RuntimeException("I hate you!");
+  };
+
+  @Test
+  public void testException() throws Exception {
+    // non-reactive code...
+    try {
+      for (int i = 1; i < 11; i++) {
+        Integer x = exceptionIfGreaterThanThree.apply(i);
+        logger.info("success:{}", x);
+      }
+    } catch (Throwable error) {
+      logger.error("error:{}", error);
+    }
+
+    // the equivalent reactive code...
+    Flux<Integer> flux = Flux.range(1, 10)
+        .map(i -> exceptionIfGreaterThanThree.apply(i));
+
+    flux.subscribe(
+        value -> logger.info("success:{}", value),
+        error -> logger.error("error:{}", error));
+  }
+
+  @Test
+  public void testInternalErrorHandling() throws Exception {
+    Flux<Integer> flux = Flux.range(1, 10)
+        .map(value -> Try.of(() -> exceptionSometimes.apply(value)).getOrElse(-1));
+
+    flux.subscribe(value -> logger.info("success:{}", value));
+  }
+
+  @Test
+  public void testOnErrorReturn() throws Exception {
+    Flux<Integer> flux = Flux.range(1, 10)
+        .map(i -> exceptionIfGreaterThanThree.apply(i))
+        // this will replace the exception with a default value but execution will still stop...
+        .onErrorReturn(-1);
+
+    flux.subscribe(
+        value -> logger.info("success:{}", value),
+        // this error block is not used...
+        error -> logger.error("error:{}", error));
+  }
+
+  @Test
+  public void testSwitchOnError() throws Exception {
+    Flux<Integer> flux = Flux.range(1, 10)
+        .map(i -> exceptionIfGreaterThanThree.apply(i))
+        .switchOnError(Flux.range(1, 10));
+
+    flux
+        .subscribe(
+            value -> logger.info("success:{}", value),
+            // this error block is not used...
+            error -> logger.error("error:{}", error));
+  }
+
+  @Test
+  public void testOnErrorResume() throws Exception {
+    Flux<Integer> flux = Flux.range(1, 10)
+        .map(value -> exceptionIfGreaterThanThree.apply(value))
+        // this doesn't seem able to pass on the value that it errored on...
+        .onErrorResumeWith(error -> {
+          logger.error("error:{}", error);
+          return Flux.range(1, 10);
+        });
+
+    flux.subscribe(
+        value -> logger.info("success:{}", value),
+        // this error block is not used...
+        error -> logger.error("error:{}", error));
+  }
+
+  @Test
+  public void testErrorRetry() throws Exception {
+    Flux<Integer> flux = Flux.range(1, 10)
+        .map(value -> exceptionSometimes.apply(value))
+        .retry(5);
+
+    flux.subscribe(
+        value -> logger.info("success:{}", value),
+        error -> logger.error("error:{}", error));
+  }
 
   @Test
   public void testSample() throws Exception {
