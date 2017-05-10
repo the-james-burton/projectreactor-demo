@@ -238,7 +238,8 @@ public class FluxTest {
   @Test
   public void testInternalErrorHandling() throws Exception {
     Flux<Integer> flux = Flux.range(1, 10)
-        .map(value -> Try.of(() -> exceptionSometimes.apply(value)).getOrElse(-1));
+        .map(value -> Try.of(() -> exceptionSometimes.apply(value)).getOrElse(-1))
+        .filter(value -> value != -1);
 
     flux.subscribe(value -> logger.info("success:{}", value));
   }
@@ -334,13 +335,44 @@ public class FluxTest {
 
     ConnectableFlux<Integer> cflux = flux.publish();
 
-    cflux.subscribe(i -> logger.info("one:{}", i));
-    cflux.subscribe(i -> logger.info("two:{}", i));
+    BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
+    BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
+
+    cflux.subscribe(fast);
+    cflux.subscribe(slow);
 
     Thread.sleep(100);
-
-    // it looks like it is working in parallel, but in fact, it is waiting for ALL subscribers to signal demand...
     cflux.connect();
+
+    // notice how the fast waits for the slow - this is by design...
+    Thread.sleep(500);
+
+  }
+
+  @Test
+  public void testBackpressureMisunderstood() throws Exception {
+    Flux<Integer> flux = Flux.range(0, 10);
+
+    flux
+        // this is not 'real' backpressure
+        // nothing is dropped since we are consuming a cold stream...
+        .onBackpressureDrop()
+        .subscribe(new DelaySubscriber<Integer>("one", 5));
+
+    Thread.sleep(200);
+  }
+
+  @Test
+  public void testBackpressureWithColdStream() throws Exception {
+    Flux<Integer> flux = Flux.range(0, 10);
+
+    flux
+        // Hmm... it seems nothing can keep up with the fury of a cold flux!
+        .onBackpressureError().log()
+        .subscribeWith(WorkQueueProcessor.create())
+        .subscribe(s -> logger.info("one:{}", s));
+
+    Thread.sleep(200);
   }
 
   @Test
@@ -359,29 +391,11 @@ public class FluxTest {
   }
 
   @Test
-  public void testConnectableFluxWithBackpressure() throws Exception {
-    Flux<Integer> flux = Flux.range(0, 5).log();
-
-    ConnectableFlux<Integer> cflux = flux.publish();
-
-    BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
-    BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
-
-    cflux.subscribe(fast);
-    cflux.subscribe(slow);
-
-    Thread.sleep(100);
-    cflux.connect();
-
-    // notice how the fast waits for the slow - this is by design...
-    Thread.sleep(500);
-
-  }
-
-  @Test
-  public void testBackpressureHotStream() throws Exception {
+  public void testBackpressureHotStreamMisunderstood() throws Exception {
     Scheduler scheduler = Schedulers.newSingle("canceling");
     Flux<Long> flux = Flux.interval(Duration.ofMillis(10))
+        // there will not be a backpressure error, since we are not using processors...
+        .onBackpressureError()
         // this is how to properly stop an interval-based flux...
         .cancelOn(scheduler)
         .log();
@@ -393,14 +407,36 @@ public class FluxTest {
     flux.subscribe(fast);
 
     // this hot stream is interesting, since it does appear to let the subscribers work at the same time...
-    Thread.sleep(500);
+    Thread.sleep(5000);
+    scheduler.dispose();
+  }
+
+  @Test
+  public void testBackpressureHotStreamWithProcessors() throws Exception {
+    Scheduler scheduler = Schedulers.newSingle("canceling");
+    Flux<Long> flux = Flux.interval(Duration.ofMillis(10))
+        // our slow processor will not be able to keep up and will error out early...
+        .onBackpressureError()
+        // this is how to properly stop an interval-based flux...
+        .cancelOn(scheduler)
+        .log();
+
+    BaseSubscriber<Long> slow = new DelaySubscriber<>("slow", 20);
+    BaseSubscriber<Long> fast = new DelaySubscriber<>("fast", 5);
+
+    flux.subscribeWith(WorkQueueProcessor.create("one", 4)).subscribe(slow);
+    flux.subscribeWith(WorkQueueProcessor.create("two", 4)).subscribe(fast);
+
+    // this hot stream is interesting, since it does appear to let the subscribers work at the same time...
+    Thread.sleep(1000);
     scheduler.dispose();
   }
 
   @Test
   public void testSubscribeWith() throws Exception {
 
-    Flux<Integer> flux = Flux.range(0, 5).log();
+    Flux<Integer> flux = Flux.range(0, 5)
+        .log();
 
     BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
     BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
