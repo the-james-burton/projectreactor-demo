@@ -44,4 +44,16 @@ public class DelaySubscriber<T> extends BaseSubscriber<T> {
     request(1);
   }
 
+  @Override
+  protected void hookOnComplete() {
+    logger.info("{}:complete", name);
+    super.hookOnComplete();
+  }
+
+  @Override
+  protected void hookOnError(Throwable throwable) {
+    logger.info("{}:error:{}", name, throwable.getMessage());
+    super.hookOnError(throwable);
+  }
+
 }

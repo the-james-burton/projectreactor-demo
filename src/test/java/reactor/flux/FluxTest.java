@@ -355,7 +355,7 @@ public class FluxTest {
 
     flux
         // this is not 'real' backpressure
-        // nothing is dropped since we are consuming a cold stream...
+        // nothing is dropped since we are consuming a cold stream in the same thread...
         .onBackpressureDrop()
         .subscribe(new DelaySubscriber<Integer>("one", 5));
 
@@ -368,9 +368,11 @@ public class FluxTest {
 
     flux
         // Hmm... it seems nothing can keep up with the fury of a cold flux!
-        .onBackpressureError().log()
+        .onBackpressureError()
         .subscribeWith(WorkQueueProcessor.create())
-        .subscribe(s -> logger.info("one:{}", s));
+        .subscribe(
+            s -> logger.info("one:{}", s),
+            e -> logger.info("one:{}", e.getMessage()));
 
     Thread.sleep(200);
   }
@@ -378,14 +380,25 @@ public class FluxTest {
   @Test
   public void testBackpressureSerial() throws Exception {
 
-    Flux<Integer> flux = Flux.range(0, 5).log();
+    // this is producing genuine backpressure as can be seen when using .onbackpressureError()
+    Flux<Integer> flux = Flux.range(0, 10)
+    // .onBackpressureBuffer()
+    // .onBackpressureError()
+    ;
 
     BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
     BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
 
-    flux.subscribeWith(WorkQueueProcessor.create()).subscribe(slow);
+    // here we see...
+    flux.log()
+        .subscribeWith(WorkQueueProcessor.create())
+        .subscribe(slow);
     logger.info("slow done");
-    flux.subscribeWith(fast);
+
+    flux.log()
+        .subscribeWith(WorkQueueProcessor.create())
+        .subscribe(fast);
+    logger.info("fast done");
 
     Thread.sleep(500);
   }
@@ -394,7 +407,7 @@ public class FluxTest {
   public void testBackpressureHotStreamMisunderstood() throws Exception {
     Scheduler scheduler = Schedulers.newSingle("canceling");
     Flux<Long> flux = Flux.interval(Duration.ofMillis(10))
-        // there will not be a backpressure error, since we are not using processors...
+        // there will not be a back pressure error, since we are not using processors...
         .onBackpressureError()
         // this is how to properly stop an interval-based flux...
         .cancelOn(scheduler)
@@ -407,7 +420,7 @@ public class FluxTest {
     flux.subscribe(fast);
 
     // this hot stream is interesting, since it does appear to let the subscribers work at the same time...
-    Thread.sleep(5000);
+    Thread.sleep(1000);
     scheduler.dispose();
   }
 
@@ -417,7 +430,7 @@ public class FluxTest {
     Flux<Long> flux = Flux.interval(Duration.ofMillis(10))
         // our slow processor will not be able to keep up and will error out early...
         .onBackpressureError()
-        // this is how to properly stop an interval-based flux...
+        // this is how to properly stop an interval-based flux...logger.info("one:{}", s)
         .cancelOn(scheduler)
         .log();
 
