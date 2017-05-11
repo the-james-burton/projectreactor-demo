@@ -18,6 +18,7 @@ import javaslang.control.Try;
 import reactor.core.publisher.BaseSubscriber;
 import reactor.core.publisher.ConnectableFlux;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.GroupedFlux;
 import reactor.core.publisher.ParallelFlux;
 import reactor.core.publisher.UnicastProcessor;
 import reactor.core.publisher.WorkQueueProcessor;
@@ -230,9 +231,11 @@ public class FluxTest {
     Flux<Integer> flux = Flux.range(1, 10)
         .map(i -> exceptionIfGreaterThanThree.apply(i));
 
-    flux.subscribe(
-        value -> logger.info("success:{}", value),
-        error -> logger.error("error:{}", error));
+    flux
+        .checkpoint() // adds a bit more to the stack trace
+        .subscribe(
+            value -> logger.info("success:{}", value),
+            error -> logger.error("error:{}", error));
   }
 
   @Test
@@ -326,7 +329,7 @@ public class FluxTest {
     flux.subscribe(i -> logger.info("one:{}", i));
     flux.subscribe(i -> logger.info("two:{}", i));
 
-    Thread.sleep(1000);
+    Thread.sleep(100);
   }
 
   @Test
@@ -380,25 +383,25 @@ public class FluxTest {
   @Test
   public void testBackpressureSerial() throws Exception {
 
-    // this is producing genuine backpressure as can be seen when using .onbackpressureError()
-    Flux<Integer> flux = Flux.range(0, 10)
-    // .onBackpressureBuffer()
-    // .onBackpressureError()
-    ;
+    // this is producing genuine back pressure, try the methods...
+    Flux<Integer> flux = Flux.range(0, 100);
+    // .onBackpressureBuffer(2);
+    // .onBackpressureError();
+    // .onBackpressureDrop();
 
     BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
     BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
 
-    // here we see...
     flux.log()
         .subscribeWith(WorkQueueProcessor.create())
         .subscribe(slow);
-    logger.info("slow done");
 
     flux.log()
         .subscribeWith(WorkQueueProcessor.create())
         .subscribe(fast);
-    logger.info("fast done");
+
+    // non blocking...
+    logger.info("done");
 
     Thread.sleep(500);
   }
@@ -419,8 +422,11 @@ public class FluxTest {
     flux.subscribe(slow);
     flux.subscribe(fast);
 
+    // non blocking...
+    logger.info("done");
+
     // this hot stream is interesting, since it does appear to let the subscribers work at the same time...
-    Thread.sleep(1000);
+    Thread.sleep(500);
     scheduler.dispose();
   }
 
@@ -440,25 +446,8 @@ public class FluxTest {
     flux.subscribeWith(WorkQueueProcessor.create("one", 4)).subscribe(slow);
     flux.subscribeWith(WorkQueueProcessor.create("two", 4)).subscribe(fast);
 
-    // this hot stream is interesting, since it does appear to let the subscribers work at the same time...
-    Thread.sleep(1000);
-    scheduler.dispose();
-  }
-
-  @Test
-  public void testSubscribeWith() throws Exception {
-
-    Flux<Integer> flux = Flux.range(0, 5)
-        .log();
-
-    BaseSubscriber<Integer> slow = new DelaySubscriber<>("slow", 20);
-    BaseSubscriber<Integer> fast = new DelaySubscriber<>("fast", 5);
-
-    //
-    flux.subscribeWith(WorkQueueProcessor.create("slow proc", 1)).subscribe(slow);
-    flux.subscribeWith(WorkQueueProcessor.create("fast proc", 1)).subscribe(fast);
-
     Thread.sleep(500);
+    scheduler.dispose();
   }
 
   @Test
@@ -487,6 +476,7 @@ public class FluxTest {
     Flux.<String> create(sink -> bespokeAPI.notify(sink))
         .buffer(Duration.ofMillis(100))
         .flatMap(l -> Flux.fromIterable(l).sort())
+        // .subscribeWith(WorkQueueProcessor.create())
         .subscribe(m -> logger.info(m.toString()));
 
     bespokeAPI.onMessage("z");
@@ -507,6 +497,7 @@ public class FluxTest {
   public void testCreateAndWindowSort() throws Exception {
     Flux.<String> create(sink -> bespokeAPI.notify(sink))
         .window(3)
+        // .subscribeWith(WorkQueueProcessor.create())
         .subscribe(s -> s.sort().subscribe(t -> logger.info("post-window:{}", t)));
 
     bespokeAPI.onMessage("z");
@@ -536,7 +527,7 @@ public class FluxTest {
 
   @Test
   public void testTransform() throws Exception {
-    // reusable part os a flux processing chain...
+    // reusable part of a flux processing chain...
     Function<Flux<Integer>, Flux<Integer>> gtFivePlusTen = f -> f
         .filter(i -> i > 5)
         .map(i -> i + 10);
@@ -549,7 +540,16 @@ public class FluxTest {
   }
 
   @Test
-  public void testCompose() throws Exception {
+  public void testGroup() throws Exception {
+    Flux<GroupedFlux<Boolean, Integer>> flux = Flux.range(0, 10)
+        .groupBy(i -> i % 2 == 0);
+
+    flux
+        .filter(g -> g.key() == false)
+        .map(g -> g.subscribe(i -> logger.info("{}:{}", g.key(), i.toString())))
+        .subscribe();
+
+    Thread.sleep(100);
 
   }
 
