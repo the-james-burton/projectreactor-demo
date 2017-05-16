@@ -4,7 +4,8 @@ import static java.lang.String.*;
 
 import java.lang.invoke.MethodHandles;
 import java.time.Duration;
-import java.util.List;
+import java.util.HashMap;
+import java.util.Random;
 import java.util.function.Function;
 
 import org.junit.Before;
@@ -19,6 +20,7 @@ import reactor.core.publisher.BaseSubscriber;
 import reactor.core.publisher.ConnectableFlux;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.GroupedFlux;
+import reactor.core.publisher.Hooks;
 import reactor.core.publisher.ParallelFlux;
 import reactor.core.publisher.UnicastProcessor;
 import reactor.core.publisher.WorkQueueProcessor;
@@ -62,54 +64,6 @@ public class FluxTest {
   }
 
   @Test
-  public void testCold() throws InterruptedException {
-    Flux<Integer> flux = Flux.range(1, 10)
-        .map(i -> i + TestUtils.randomInteger())
-        .take(3);
-
-    Thread.sleep(100);
-    flux.subscribe(i -> logger.info(format("one:%s", i.toString())));
-    Thread.sleep(100);
-    flux.subscribe(i -> logger.info(format("two:%s", i.toString())));
-  }
-
-  @Test
-  public void testHot() throws InterruptedException {
-    UnicastProcessor<Integer> processor = UnicastProcessor.create();
-
-    Flux<Integer> hot = processor.publish()
-        .autoConnect()
-        .log()
-        .map(i -> i + TestUtils.randomInteger());
-
-    processor.onNext(1);
-    processor.onNext(2);
-
-    Thread.sleep(100);
-    hot.subscribe(i -> logger.info(format("one:%s", i.toString())));
-
-    processor.onNext(3);
-    processor.onNext(4);
-
-    Thread.sleep(100);
-    hot.subscribe(i -> logger.info(format("two:%s", i.toString())));
-
-    processor.onNext(5);
-    processor.onNext(6);
-
-    Thread.sleep(100);
-    processor.onComplete();
-  }
-
-  @Test
-  public void testParallel() {
-    Flux.range(1, 10)
-        .parallel() // will do number of CPU cores
-        .runOn(Schedulers.parallel())
-        .subscribe(i -> logger.info(i.toString()));
-  }
-
-  @Test
   public void testChaining() {
     // this is wrong, since a flux is effectively immutable...
     Flux<String> flux1 = Flux.just("foo", "chain");
@@ -128,6 +82,55 @@ public class FluxTest {
   }
 
   @Test
+  public void testCold() throws InterruptedException {
+    Flux<Integer> flux = Flux.range(1, 10)
+        .map(i -> i + TestUtils.randomInteger())
+        .take(3);
+
+    // the flux is executed fully for each subscriber, hence the difference results doe to random...
+    Thread.sleep(100);
+    flux.subscribe(i -> logger.info(format("one:%s", i.toString())));
+    Thread.sleep(100);
+    flux.subscribe(i -> logger.info(format("two:%s", i.toString())));
+  }
+
+  @Test
+  public void testHot() throws InterruptedException {
+    UnicastProcessor<Integer> processor = UnicastProcessor.create();
+
+    Flux<Integer> hot = processor.publish()
+        .autoConnect()
+        .log();
+
+    processor.onNext(1);
+    processor.onNext(2);
+
+    Thread.sleep(100);
+    hot.subscribe(i -> logger.info(format("one:%s", i.toString())));
+
+    processor.onNext(3);
+    processor.onNext(4);
+
+    // this later publisher will NOT receive the missed messages...
+    Thread.sleep(100);
+    hot.subscribe(i -> logger.info(format("two:%s", i.toString())));
+
+    processor.onNext(5);
+    processor.onNext(6);
+
+    Thread.sleep(100);
+    processor.onComplete();
+  }
+
+  @Test
+  public void testParallel() {
+    Flux.range(1, 10)
+        .parallel() // will create a thread per CPU cores by default
+        .runOn(Schedulers.parallel())
+        .subscribe(i -> logger.info(i.toString()));
+  }
+
+  @Test
   public void testZip() {
     Flux<String> letters = Flux.just("a", "b", "c");
     Flux<Integer> numbers = Flux.just(1, 2, 3);
@@ -142,9 +145,11 @@ public class FluxTest {
     Flux<Integer> flux = Flux.range(1, 10).log();
     flux.subscribe(subscriber);
 
-    Thread.sleep(100);
+    Thread.sleep(10);
     subscriber.request(1);
+    Thread.sleep(10);
     subscriber.request(1);
+    Thread.sleep(10);
     subscriber.request(1);
 
     Thread.sleep(100);
@@ -172,23 +177,15 @@ public class FluxTest {
   }
 
   @Test
-  public void testGroupBy() {
-    Flux<Integer> flux = Flux.range(1, 10).log();
-
-    flux
-        .groupBy(i -> i % 2)
-        .subscribe(s -> s.buffer().subscribe(t -> logger.info("group:{}:{}", s.key(), t)));
-  }
-
-  @Test
   public void testSplit() throws InterruptedException {
     Flux<Integer> flux = Flux.range(1, 10).log();
 
     flux
+        // this Integer -> Flux flatMap does the one-to-many operation...
         .flatMap(i -> Flux.just(i, i + 100))
         .subscribe(t -> logger.info("split:{}", t));
 
-    // this does not work for some reason, despite the docs saying it can do one-to-many...
+    // this alternative does not work for some reason, despite the docs saying it can do one-to-many...
     // flux
     // .handle((i, sink) -> {
     // sink.next(i);
@@ -197,13 +194,13 @@ public class FluxTest {
     // .subscribe(t -> logger.info("split:{}", t)
   }
 
-  private static Function<Integer, Integer> exceptionIfGreaterThanThree = i -> {
-    if (i < 4)
+  private static Function<Integer, Integer> exceptionIfGreaterThanFive = i -> {
+    if (i < 6)
       return i;
     throw new RuntimeException("I hate you!");
   };
 
-  private static Function<Integer, Integer> exceptionIfDivisibleByTwo = i -> {
+  private static Function<Integer, Integer> exceptionIfNotDivisibleByTwo = i -> {
     if (i % 2 == 0)
       return i;
     throw new RuntimeException("I hate you!");
@@ -220,28 +217,28 @@ public class FluxTest {
     // non-reactive code...
     try {
       for (int i = 1; i < 11; i++) {
-        Integer x = exceptionIfGreaterThanThree.apply(i);
+        Integer x = exceptionIfGreaterThanFive.apply(i);
         logger.info("success:{}", x);
       }
     } catch (Throwable error) {
-      logger.error("error:{}", error);
+      logger.error("error", error);
     }
 
     // the equivalent reactive code...
     Flux<Integer> flux = Flux.range(1, 10)
-        .map(i -> exceptionIfGreaterThanThree.apply(i));
+        .map(i -> exceptionIfGreaterThanFive.apply(i));
 
     flux
         .checkpoint() // adds a bit more to the stack trace
         .subscribe(
             value -> logger.info("success:{}", value),
-            error -> logger.error("error:{}", error));
+            error -> logger.error("error", error));
   }
 
   @Test
   public void testInternalErrorHandling() throws Exception {
     Flux<Integer> flux = Flux.range(1, 10)
-        .map(value -> Try.of(() -> exceptionSometimes.apply(value)).getOrElse(-1))
+        .map(value -> Try.of(() -> exceptionIfNotDivisibleByTwo.apply(value)).getOrElse(-1))
         .filter(value -> value != -1);
 
     flux.subscribe(value -> logger.info("success:{}", value));
@@ -250,54 +247,89 @@ public class FluxTest {
   @Test
   public void testOnErrorReturn() throws Exception {
     Flux<Integer> flux = Flux.range(1, 10)
-        .map(i -> exceptionIfGreaterThanThree.apply(i))
+        .map(i -> exceptionIfGreaterThanFive.apply(i))
         // this will replace the exception with a default value but execution will still stop...
         .onErrorReturn(-1);
 
     flux.subscribe(
         value -> logger.info("success:{}", value),
-        // this error block is not used...
-        error -> logger.error("error:{}", error));
+        // this error block is not used because the flux has handled the exception itself...
+        error -> logger.error("error", error));
   }
 
   @Test
   public void testSwitchOnError() throws Exception {
     Flux<Integer> flux = Flux.range(1, 10)
-        .map(i -> exceptionIfGreaterThanThree.apply(i))
-        .switchOnError(Flux.range(1, 10));
+        .map(i -> exceptionIfGreaterThanFive.apply(i))
+        // will start using the supplied flux FROM THE START if there is an exception...
+        .switchOnError(Flux.range(100, 10));
 
     flux
         .subscribe(
             value -> logger.info("success:{}", value),
-            // this error block is not used...
-            error -> logger.error("error:{}", error));
+            error -> logger.error("error", error));
+  }
+
+  @Test
+  public void testDebugHook() throws Exception {
+    // this will turn on traces inside the processing streams without needing checkpoints,
+    // but it is expensive...
+    Hooks.onOperator(providedHook -> providedHook.operatorStacktrace());
+
+    Flux<Integer> flux = Flux.range(1, 10)
+        .map(i -> exceptionIfGreaterThanFive.apply(i));
+
+    flux
+        .subscribe(
+            value -> logger.info("success:{}", value),
+            error -> logger.error("error", error));
+
+  }
+
+  @Test
+  public void testCheckpoints() throws Exception {
+    // the checkpoint AFTER the exception will be seen in the stack trace...
+    Flux<Integer> flux = Flux.range(1, 10)
+        .checkpoint("before good")
+        .map(i -> i + 1)
+        .checkpoint("before bad")
+        .map(i -> exceptionIfGreaterThanFive.apply(i))
+        .checkpoint("after bad");
+
+    flux
+        .subscribe(
+            value -> logger.info("success:{}", value),
+            error -> logger.error("error", error));
+
   }
 
   @Test
   public void testOnErrorResume() throws Exception {
+
     Flux<Integer> flux = Flux.range(1, 10)
-        .map(value -> exceptionIfGreaterThanThree.apply(value))
-        // this doesn't seem able to pass on the value that it errored on...
+        .map(value -> exceptionIfGreaterThanFive.apply(value))
+        // this doesn't seem able to pass on the value that caused the error...
         .onErrorResumeWith(error -> {
-          logger.error("error:{}", error);
+          logger.error("error", error);
           return Flux.range(1, 10);
         });
 
     flux.subscribe(
         value -> logger.info("success:{}", value),
-        // this error block is not used...
-        error -> logger.error("error:{}", error));
+        // this error block is not used because the flux has handled the exception itself...
+        error -> logger.error("error", error));
   }
 
   @Test
   public void testErrorRetry() throws Exception {
     Flux<Integer> flux = Flux.range(1, 10)
         .map(value -> exceptionSometimes.apply(value))
+        // this will cause the flux to restart up to five times in an attempt to complete without exception...
         .retry(5);
 
     flux.subscribe(
         value -> logger.info("success:{}", value),
-        error -> logger.error("error:{}", error));
+        error -> logger.error("error", error));
   }
 
   @Test
@@ -384,7 +416,7 @@ public class FluxTest {
   public void testBackpressureSerial() throws Exception {
 
     // this is producing genuine back pressure, try the methods...
-    Flux<Integer> flux = Flux.range(0, 100);
+    Flux<Integer> flux = Flux.range(0, 20);
     // .onBackpressureBuffer(2);
     // .onBackpressureError();
     // .onBackpressureDrop();
@@ -407,13 +439,13 @@ public class FluxTest {
   }
 
   @Test
-  public void testBackpressureHotStreamMisunderstood() throws Exception {
+  public void testBackpressureHotStreamMisundterstood() throws Exception {
     Scheduler scheduler = Schedulers.newSingle("canceling");
-    Flux<Long> flux = Flux.interval(Duration.ofMillis(10))
-        // there will not be a back pressure error, since we are not using processors...
-        .onBackpressureError()
+    Flux<Long> flux = Flux.interval(Duration.ofMillis(10), scheduler)
         // this is how to properly stop an interval-based flux...
         .cancelOn(scheduler)
+        // there will not be a back pressure error, since we are not using processors...
+        .onBackpressureError()
         .log();
 
     BaseSubscriber<Long> slow = new DelaySubscriber<>("slow", 20);
@@ -425,15 +457,16 @@ public class FluxTest {
     // non blocking...
     logger.info("done");
 
-    // this hot stream is interesting, since it does appear to let the subscribers work at the same time...
-    Thread.sleep(500);
+    // this hot stream is interesting, since it does appear to let the subscribers work
+    // at the same time without specifying processors...
+    Thread.sleep(200);
     scheduler.dispose();
   }
 
   @Test
   public void testBackpressureHotStreamWithProcessors() throws Exception {
     Scheduler scheduler = Schedulers.newSingle("canceling");
-    Flux<Long> flux = Flux.interval(Duration.ofMillis(10))
+    Flux<Long> flux = Flux.interval(Duration.ofMillis(10), scheduler)
         // our slow processor will not be able to keep up and will error out early...
         .onBackpressureError()
         // this is how to properly stop an interval-based flux...logger.info("one:{}", s)
@@ -515,14 +548,24 @@ public class FluxTest {
   }
 
   @Test
-  public void testGenerateBufferSort() {
-    List<String> result = Flux.<String> just("c", "a", "b")
-        .buffer(Duration.ofSeconds(2))
-        .flatMap(l -> Flux.fromIterable(l).sort())
-        .collectList().block();
-    // .subscribe(m -> logger.info(m.toString()));
+  public void testHotBufferSort() throws Exception {
+    Scheduler scheduler = Schedulers.newSingle("canceling");
+    Random random = new Random();
 
-    logger.info(result.toString());
+    Flux<Integer> flux = Flux.interval(Duration.ofMillis(10))
+        .cancelOn(scheduler)
+        .map(i -> random.nextInt(100))
+        .buffer(5)
+        .flatMap(l -> Flux.fromIterable(l).sort());
+
+    flux
+        .subscribe(m -> logger.info(m.toString()));
+
+    logger.info("done");
+
+    Thread.sleep(500);
+    scheduler.dispose();
+
   }
 
   @Test
@@ -541,13 +584,32 @@ public class FluxTest {
 
   @Test
   public void testGroup() throws Exception {
-    Flux<GroupedFlux<Boolean, Integer>> flux = Flux.range(0, 10)
-        .groupBy(i -> i % 2 == 0);
+    // note how .groupBy() rebases the flux...
+    Flux<GroupedFlux<Integer, Integer>> flux = Flux.range(0, 30)
+        .groupBy(i -> i % 3);
 
+    //
     flux
-        .filter(g -> g.key() == false)
         .map(g -> g.subscribe(i -> logger.info("{}:{}", g.key(), i.toString())))
         .subscribe();
+
+    // they can be buffered to an iterator...
+    flux
+        .subscribe(s -> s.buffer().subscribe(t -> logger.info("group:{}:{}", s.key(), t)));
+
+    //
+    HashMap<Integer, Scheduler> schedulers = new HashMap<>();
+
+    schedulers.put(0, Schedulers.newSingle("zero"));
+    schedulers.put(1, Schedulers.newSingle("one"));
+    schedulers.put(2, Schedulers.newSingle("two"));
+
+    flux
+        .map(g -> g.publishOn(schedulers.get(g.key())))
+        .subscribe(s -> s.subscribe(i -> logger.info(i.toString())));
+
+    // non blocking...
+    logger.info("done");
 
     Thread.sleep(100);
 
