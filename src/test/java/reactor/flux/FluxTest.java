@@ -15,6 +15,7 @@ import org.junit.rules.TestName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javaslang.collection.Stream;
 import javaslang.control.Try;
 import reactor.core.publisher.BaseSubscriber;
 import reactor.core.publisher.ConnectableFlux;
@@ -493,6 +494,28 @@ public class FluxTest {
   }
 
   @Test
+  public void testToCollections() throws Exception {
+    Flux<Integer> flux = Flux.range(1, 10)
+        .map(i -> TestUtils.randomInteger());
+
+    flux.collectList()
+        .subscribe(l -> logger.info(l.toString()));
+
+    flux.collectSortedList()
+        .subscribe(l -> logger.info(l.toString()));
+
+    flux.collectMap(i -> "key" + i)
+        .subscribe(l -> logger.info(l.toString()));
+
+    // this does not work with immutable collections..!
+    Flux.range(1, 10).collect(Stream::of, (a, b) -> a.append(b))
+        .subscribe(l -> logger.info(l.toJavaList().toString()));
+
+    logger.info("non blocking");
+
+  }
+
+  @Test
   public void testCreate() throws Exception {
     Flux.<String> create(sink -> bespokeAPI.notify(sink))
         .subscribe(m -> logger.info(m.toString()));
@@ -552,7 +575,7 @@ public class FluxTest {
     Scheduler scheduler = Schedulers.newSingle("canceling");
     Random random = new Random();
 
-    Flux<Integer> flux = Flux.interval(Duration.ofMillis(10))
+    Flux<Integer> flux = Flux.interval(Duration.ofMillis(10), scheduler)
         .cancelOn(scheduler)
         .map(i -> random.nextInt(100))
         .buffer(5)
